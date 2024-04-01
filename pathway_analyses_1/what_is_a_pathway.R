@@ -8,6 +8,7 @@ library(tidyverse)
 library(AnnotationDbi)
 library(org.Hs.eg.db)
 library(ggplot2)
+library(biomaRt)
 
 
 ##### DATA PROCESSING #####
@@ -32,9 +33,22 @@ simple_meta$group_name <- c(rep("control", 3),
 keep <- rowSums( tbl >= 10 ) >= 2
 tbl <- tbl[keep, ]
 
+# keep only protein coding genes
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = 'www.ensembl.org')
+genes <- biomaRt::getBM(attributes = c("external_gene_name", "chromosome_name","transcript_biotype"), filters = c("transcript_biotype","chromosome_name"),values = list("protein_coding",c(1:22)), mart = mart)
+
+z <- AnnotationDbi::select(x = org.Hs.eg.db, 
+                           keys = as.character(rownames(tbl)), 
+                           keytype = "ENTREZID", 
+                           columns = c("SYMBOL", "GENENAME"))
+
+gids <- which(z$SYMBOL %in% genes$external_gene_name)
+E <- tbl[gids, ] # <-- final expression table
+G <- z[gids, ] # <-- gene annotation data frame
+
 
 ##### Differential expression #####
-dds <- DESeqDataSetFromMatrix(countData = tbl[,1:9],
+dds <- DESeqDataSetFromMatrix(countData = E[,1:9],
                               colData = simple_meta,
                               design = ~ group_name)
 
@@ -50,14 +64,9 @@ res <- tibble::tibble(entrez_id = rownames(glc_noglc),
                         p_val = as.vector(as.numeric(glc_noglc$pvalue)),
                         q_val = as.vector(as.numeric(glc_noglc$padj)))
 
-z <- AnnotationDbi::select(x = org.Hs.eg.db, 
-                           keys = as.character(res$entrez_id), 
-                           keytype = "ENTREZID", 
-                           columns = c("SYMBOL", "GENENAME"))
-
 diff_genes <- res %>% 
-  tibble::add_column(gene_symbol = z$SYMBOL) %>% 
-  tibble::add_column(gene_name = z$GENENAME) %>% 
+  tibble::add_column(gene_symbol = G$SYMBOL) %>% 
+  tibble::add_column(gene_name = G$GENENAME) %>% 
   dplyr::filter(., q_val < 0.05, abs(logFC) > 1)
 
 
@@ -78,6 +87,22 @@ res %>%
         axis.title = element_text(size = 24, color = "black"),
         legend.position = "none",
         panel.grid = element_blank())
+
+
+# plot differentially expressed genes only
+diff_genes %>%
+  # dplyr::arrange(desc(logFC)) %>%
+  # tibble::add_column(rank_order = seq(1, nrow(diff_genes))) %>%
+  ggplot(aes(x = logFC, y = fct_reorder(gene_symbol, logFC))) +
+  geom_point(alpha = 0.5, size = 3) + 
+  labs(x = "log2(fold change)", y = "Gene symbol") +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 18, color = "black"),
+        axis.text.y = element_text(size = 8, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.position = "none",
+        panel.grid = element_blank())
+
 
 
 
