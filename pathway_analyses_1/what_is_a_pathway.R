@@ -103,7 +103,19 @@ diff_genes %>%
         legend.position = "none",
         panel.grid = element_blank())
 
+# do a pathway enrichment
+enr_res <- oranges::oranges(query_entrez = diff_genes$entrez_id, universe_entrez = G$ENTREZID)
 
+enr_res %>% 
+  dplyr::filter(., padj < 0.005) %>%
+  ggplot(aes(x = -log10(padj), y = fct_reorder(name, -log10(padj)))) +
+  geom_bar(stat = "identity") +
+  labs(y = "Pathway name", x = "Enrichment score (-log10(q))") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 12, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.position = "none",
+        panel.grid = element_blank())
 
 
 
