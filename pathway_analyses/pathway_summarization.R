@@ -1,3 +1,7 @@
+# Follow me on computingbiology.blog
+#
+# Companion code for 
+
 ##### LIBRARIES #####
 library(DESeq2)
 library(GEOquery)
@@ -10,40 +14,51 @@ library(oranges)
 
 
 
-##### DATA PROCESSING #####
-# load counts table from GEO
-urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
-path <- paste(urld, "acc=GSE179347", "file=GSE179347_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
-tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames=1)
+##### GENE SET OVERLAPS #####
+glyc <- grep("glycolysis", oranges::cpdb_data$pathway_info$pathway_name)
 
-# get metadata annotations for samples
-X <- GEOquery::getGEO(GEO = "GSE179347")
+O <- matrix(0, nrow = length(glyc), ncol = length(glyc))
+glyco_comparison <- vector(mode = "list", length = length(glyc))
 
-simple_meta <- data.frame(accession = pData(X[[1]])[1:9, 2],
-                          group = pData(X[[1]])[1:9, 48])
-rownames(simple_meta) <- rownames(pData(X[[1]]))[1:9]
-simple_meta$group_name <- c(rep("control", 3),
-                            rep("no_glucose", 3),
-                            rep("glucose", 3))
+for (i in seq(1, length(glyc))) {
+  
+  gcount <- length(names(which(oranges::cpdb_data$pathway_matrix[glyc[i], ] != 0)))
+  psource <- oranges::cpdb_data$pathway_info$pathway_source[glyc[i]]
+  
+  for (j in seq(1, length(glyc))) {
+    
+    aub <- length(union(names(which(oranges::cpdb_data$pathway_matrix[glyc[i], ] != 0)), names(which(oranges::cpdb_data$pathway_matrix[glyc[j], ] != 0))))
+    aintb <- length(intersect(names(which(oranges::cpdb_data$pathway_matrix[glyc[i], ] != 0)), names(which(oranges::cpdb_data$pathway_matrix[glyc[j], ] != 0))))
+    O[i, j] <- aintb / aub
+    
+  }
+  
+  glyco_comparison[[i]] <- tibble::tibble(pathway_name = oranges::cpdb_data$pathway_info$pathway_name[glyc[i]],
+                                          pathway_source = psource,
+                                          number_genes = gcount)
+  
+}
+glyco_comparison <- do.call(what = rbind, glyco_comparison)
+
+# plot differences
+glyco_comparison %>% 
+  ggplot(aes(x = pathway_source, y = number_genes)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = NULL, y = "Number of genes in gene set") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(size = 14, angle = 90, vjust = 0.5, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        panel.background = element_blank())
+
+# plot matrix of similarities
+rownames(O) <- glyco_comparison$pathway_source
+colnames(O) <- glyco_comparison$pathway_source
 
 
-# pre-filter low count genes
-# keep genes with at least 10 counts in at least 2 samples
-keep <- rowSums( tbl >= 10 ) >= 2
-tbl <- tbl[keep, ]
+corrplot::corrplot(O, 
+                   method = "circle", 
+                   type = "upper", 
+                   tl.col = "black", 
+                   is.corr = FALSE, 
+                   tl.cex = 1)
 
-# keep only protein coding genes
-mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = 'www.ensembl.org')
-genes <- biomaRt::getBM(attributes = c("external_gene_name", "chromosome_name","transcript_biotype"), filters = c("transcript_biotype","chromosome_name"),values = list("protein_coding",c(1:22)), mart = mart)
-
-z <- AnnotationDbi::select(x = org.Hs.eg.db, 
-                           keys = as.character(rownames(tbl)), 
-                           keytype = "ENTREZID", 
-                           columns = c("SYMBOL", "GENENAME"))
-
-gids <- which(z$SYMBOL %in% genes$external_gene_name)
-E <- tbl[gids, ] # <-- final expression table
-G <- z[gids, ] # <-- gene annotation data frame
-
-##### LOAD GENE SETS #####
-kegg_pathways <- oranges::cpdb_data$pathway_info$pathway_name[oranges::cpdb_data$pathway_info$pathway_source == "kegg"]
